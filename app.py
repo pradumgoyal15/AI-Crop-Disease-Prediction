@@ -5,6 +5,9 @@ import json
 from PIL import Image
 from disease_info import DISEASE_INFO
 import os
+import csv
+import io
+from datetime import datetime
 
 # =========================================================
 # GEMINI AI CONFIGURATION
@@ -221,6 +224,10 @@ def load_class_names():
 
 model = load_model()
 class_names = load_class_names()
+
+# Keep prediction history during the current Streamlit session
+if "prediction_history" not in st.session_state:
+    st.session_state.prediction_history = []
 
 
 # =========================================================
@@ -504,17 +511,25 @@ if uploaded_file is not None:
                 verbose=0
             )
 
-            predicted_index = np.argmax(
-                predictions[0]
-            )
-
-            predicted_class = class_names[
-                predicted_index
+            # Get the top 3 model predictions
+            top_indices = np.argsort(predictions[0])[::-1][:3]
+            top_predictions = [
+                (class_names[int(i)], float(predictions[0][i]) * 100)
+                for i in top_indices
             ]
 
-            confidence = (
-                predictions[0][predicted_index]
-                * 100
+            predicted_class = top_predictions[0][0]
+            confidence = top_predictions[0][1]
+
+            # Save this prediction in session history
+            st.session_state.prediction_history.insert(
+                0,
+                {
+                    "Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "File": uploaded_file.name,
+                    "Prediction": predicted_class,
+                    "Confidence (%)": round(confidence, 2),
+                },
             )
 
         # =================================================
@@ -546,6 +561,16 @@ if uploaded_file is not None:
         st.progress(
             float(confidence / 100)
         )
+
+        # =================================================
+        # TOP 3 PREDICTIONS
+        # =================================================
+
+        st.subheader("📊 Top 3 Predictions")
+
+        for rank, (label, score) in enumerate(top_predictions, start=1):
+            st.write(f"{rank}. **{label.replace('_', ' ')}** — {score:.2f}%")
+            st.progress(max(0.0, min(1.0, score / 100)))
 
         # =================================================
         # GENAI EXPLANATION
@@ -654,6 +679,37 @@ if uploaded_file is not None:
             disclaimer
         )
 
+
+# =========================================================
+# PREDICTION HISTORY
+# =========================================================
+
+st.divider()
+st.subheader("🗂️ Prediction History")
+
+history = st.session_state.prediction_history
+
+if history:
+    st.dataframe(history, use_container_width=True)
+
+    # Download CSV report
+    csv_buffer = io.StringIO()
+    writer = csv.DictWriter(csv_buffer, fieldnames=history[0].keys())
+    writer.writeheader()
+    writer.writerows(history)
+
+    st.download_button(
+        label="⬇️ Download Prediction History (CSV)",
+        data=csv_buffer.getvalue(),
+        file_name="crop_disease_prediction_history.csv",
+        mime="text/csv",
+    )
+
+    if st.button("🧹 Clear History"):
+        st.session_state.prediction_history = []
+        st.rerun()
+else:
+    st.caption("Your analyzed images and predictions will appear here during this session.")
 
 # =========================================================
 # FOOTER
